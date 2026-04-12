@@ -1,0 +1,67 @@
+name: Illinois Plumber License Scraper
+
+on:
+  workflow_dispatch:    # Trigger manually from the GitHub Actions tab
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360    # 6 hours (free GitHub Actions limit)
+
+    permissions:
+      contents: write       # Needed so the job can commit results back to the repo
+
+    steps:
+      # ── 1. Checkout (pulls existing progress.txt + plumbers_output.csv) ───
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # Full history so we can push back cleanly
+
+      # ── 2. Set up Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── 3. Install Python dependencies ────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. Install Chrome + undetected ChromeDriver via SeleniumBase ──────
+      - name: Install Chrome and ChromeDriver
+        run: |
+          seleniumbase install chromedriver latest
+          seleniumbase install uc_driver
+
+      # ── 5. Run the scraper in headless mode ───────────────────────────────
+      #    - Reads progress.txt to skip already-done cities (incl. Chicago)
+      #    - Appends new records to plumbers_output.csv
+      - name: Run scraper
+        run: python scraper.py --headless
+        env:
+          PYTHONUNBUFFERED: "1"
+
+      # ── 6. Commit updated CSV + progress back to the repo ─────────────────
+      #    This saves progress so the next run picks up where this one left off
+      - name: Save results to repo
+        if: always()          # Run even if scraper hit some errors
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add plumbers_output.csv progress.txt scraper.log
+          git diff --cached --quiet || git commit -m "scraper: add results from run #${{ github.run_number }}"
+          git push
+
+      # ── 7. Also upload CSV as a downloadable artifact (backup) ────────────
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plumbers-run-${{ github.run_number }}
+          path: |
+            plumbers_output.csv
+            scraper.log
+          retention-days: 90
